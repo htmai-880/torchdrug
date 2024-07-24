@@ -56,16 +56,20 @@ class Engine(core.Configurable):
         logger (str or core.LoggerBase, optional): logger type or logger instance.
             Available types are ``logging`` and ``wandb``.
         log_interval (int, optional): log every n gradient updates
+        shuffle (bool, optional): whether to shuffle the training samples or not. By default, False.
+        eval_batch_size (int, optional): batch size for evaluation. By default, use min(batch_size, 200).
     """
 
     def __init__(self, task, train_set, valid_set, test_set, optimizer, scheduler=None, gpus=None, batch_size=1,
-                 gradient_interval=1, num_worker=0, logger="logging", log_interval=100):
+                 gradient_interval=1, num_worker=0, logger="logging", log_interval=100, shuffle=False, eval_batch_size=None):
         self.rank = comm.get_rank()
         self.world_size = comm.get_world_size()
         self.gpus = gpus
         self.batch_size = batch_size
         self.gradient_interval = gradient_interval
         self.num_worker = num_worker
+        self.shuffle = shuffle
+        self.eval_batch_size = eval_batch_size
 
         if gpus is None:
             self.device = torch.device("cpu")
@@ -134,7 +138,7 @@ class Engine(core.Configurable):
             batch_per_epoch (int, optional): number of batches per epoch
         """
         sampler = torch_data.DistributedSampler(self.train_set, self.world_size, self.rank)
-        dataloader = data.DataLoader(self.train_set, self.batch_size, sampler=sampler, num_workers=self.num_worker)
+        dataloader = data.DataLoader(self.train_set, self.batch_size, shuffle=self.shuffle, sampler=sampler, num_workers=self.num_worker)
         batch_per_epoch = batch_per_epoch or len(dataloader)
         model = self.model
         model.split = "train"
@@ -199,7 +203,8 @@ class Engine(core.Configurable):
             logger.warning("Evaluate on %s" % split)
         test_set = getattr(self, "%s_set" % split)
         sampler = torch_data.DistributedSampler(test_set, self.world_size, self.rank)
-        dataloader = data.DataLoader(test_set, self.batch_size, sampler=sampler, num_workers=self.num_worker)
+        batch_size = self.eval_batch_size if self.eval_batch_size is not None else min(self.batch_size, 200)
+        dataloader = data.DataLoader(test_set, batch_size, sampler=sampler, num_workers=self.num_worker)
         model = self.model
         model.split = split
 
